@@ -294,6 +294,15 @@ fn compute_preliminary(tree: &mut impl LayoutFlexboxContainer, node: NodeId, inp
         constants.gap.set_main(constants.dir, new_gap);
     }
 
+    // Size-only queries with a definite cross size already know both output
+    // dimensions. The remaining flex distribution, baselines and alignment
+    // affect descendants, which are only needed for PerformLayout. Use the
+    // same cross-size clamping as the full path.
+    if run_mode == RunMode::ComputeSize && known_dimensions.cross(constants.dir).is_some() {
+        let _ = determine_container_cross_size(&[], known_dimensions, &mut constants);
+        return LayoutOutput::from_outer_size(constants.container_size);
+    }
+
     // 6. Resolve the flexible lengths of all the flex items to find their used main size.
     debug_log!("resolve_flexible_lengths");
     for line in &mut flex_lines {
@@ -336,6 +345,13 @@ fn compute_preliminary(tree: &mut impl LayoutFlexboxContainer, node: NodeId, inp
 
     // TODO implement once (if ever) we support visibility:collapse
 
+    // The line cross sizes now determine the container size. Size-only
+    // queries do not need child stretching, auto margins or alignment.
+    if run_mode == RunMode::ComputeSize {
+        let _ = determine_container_cross_size(&flex_lines, known_dimensions, &mut constants);
+        return LayoutOutput::from_outer_size(constants.container_size);
+    }
+
     // 11. Determine the used cross size of each flex item.
     debug_log!("determine_used_cross_size");
     determine_used_cross_size(tree, &mut flex_lines, &constants);
@@ -355,12 +371,6 @@ fn compute_preliminary(tree: &mut impl LayoutFlexboxContainer, node: NodeId, inp
     // 15. Determine the flex container’s used cross size.
     debug_log!("determine_container_cross_size");
     let total_line_cross_size = determine_container_cross_size(&flex_lines, known_dimensions, &mut constants);
-
-    // We have the container size.
-    // If our caller does not care about performing layout we are done now.
-    if run_mode == RunMode::ComputeSize {
-        return LayoutOutput::from_outer_size(constants.container_size);
-    }
 
     // 16. Align all flex lines per align-content.
     debug_log!("align_flex_lines_per_align_content");

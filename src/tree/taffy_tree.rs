@@ -210,6 +210,7 @@ impl<NodeContext> TraverseTree for TaffyTree<NodeContext> {}
 
 // CacheTree impl for TaffyTree
 impl<NodeContext> CacheTree for TaffyTree<NodeContext> {
+    #[inline(always)]
     fn cache_get(&self, node_id: NodeId, input: &LayoutInput) -> Option<LayoutOutput> {
         self.nodes[node_id.into()].cache.get(input)
     }
@@ -408,6 +409,7 @@ where
     MeasureFunction:
         FnMut(Size<Option<f32>>, Size<AvailableSpace>, NodeId, Option<&mut NodeContext>, &Style) -> Size<f32>,
 {
+    #[inline(always)]
     fn cache_get(&self, node_id: NodeId, input: &LayoutInput) -> Option<LayoutOutput> {
         self.taffy.nodes[node_id.into()].cache.get(input)
     }
@@ -955,6 +957,79 @@ mod tests {
         _style: &Style,
     ) -> Size<f32> {
         known_dimensions.unwrap_or(node_context.cloned().unwrap_or(Size::ZERO))
+    }
+
+    #[test]
+    fn size_queries_match_full_layout_with_clamps_and_padding() {
+        use crate::{AlignItems, BoxSizing, FlexWrap, Line, RequestedAxis, SizingMode};
+        for direction in
+            [FlexDirection::Row, FlexDirection::Column, FlexDirection::RowReverse, FlexDirection::ColumnReverse]
+        {
+            for cross in [None, Some(0.0), Some(12.0), Some(32.0), Some(80.0)] {
+                for padding in [0.0, 4.0, 20.0] {
+                    for wrapping in [FlexWrap::NoWrap, FlexWrap::Wrap] {
+                        for box_sizing in [BoxSizing::BorderBox, BoxSizing::ContentBox] {
+                            let mut tree = TaffyTree::<()>::new();
+                            let children = [13.0, 27.0, 41.0].map(|main| {
+                                tree.new_leaf(Style {
+                                    size: if direction.is_row() {
+                                        Size { width: length(main), height: length(17.0) }
+                                    } else {
+                                        Size { width: length(17.0), height: length(main) }
+                                    },
+                                    flex_grow: 1.0,
+                                    ..Style::default()
+                                })
+                                .unwrap()
+                            });
+                            let mut size = Size::auto();
+                            let mut min_size = Size::auto();
+                            let mut max_size = Size::auto();
+                            if let Some(cross) = cross {
+                                size.set_cross(direction, length(cross));
+                            }
+                            min_size.set_cross(direction, length(10.0));
+                            max_size.set_cross(direction, length(36.0));
+                            let node = tree
+                                .new_with_children(
+                                    Style {
+                                        size,
+                                        min_size,
+                                        max_size,
+                                        flex_direction: direction,
+                                        flex_wrap: wrapping,
+                                        box_sizing,
+                                        align_items: Some(AlignItems::Baseline),
+                                        padding: crate::Rect::length(padding),
+                                        gap: Size::length(3.0),
+                                        ..Style::default()
+                                    },
+                                    &children,
+                                )
+                                .unwrap();
+                            let input = LayoutInput {
+                                run_mode: RunMode::ComputeSize,
+                                sizing_mode: SizingMode::InherentSize,
+                                axis: RequestedAxis::Both,
+                                known_dimensions: Size::NONE,
+                                parent_size: Size::NONE,
+                                available_space: Size::MAX_CONTENT,
+                                vertical_margins_are_collapsible: Line::FALSE,
+                            };
+                            let mut full = tree.clone();
+                            let measured = tree.as_layout_tree().compute_child_layout(node, input);
+                            let laid_out = full
+                                .as_layout_tree()
+                                .compute_child_layout(node, LayoutInput { run_mode: RunMode::PerformLayout, ..input });
+                            assert_eq!(
+                                measured.size, laid_out.size,
+                                "{direction:?} cross={cross:?} padding={padding} {wrapping:?} {box_sizing:?}"
+                            );
+                        }
+                    }
+                }
+            }
+        }
     }
 
     #[test]

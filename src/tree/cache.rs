@@ -128,6 +128,68 @@ impl Cache {
                 })
                 .map(|e| e.content),
             RunMode::ComputeSize => {
+                // A missing known dimension can only match another missing
+                // dimension. Its available-space class must also match. The
+                // insertion partition therefore rules out the other slots.
+                // Keep candidates in ascending order to preserve first-match
+                // behavior when a known dimension equals a cached output size.
+                let candidates: &[usize] = match (known_dimensions.width, known_dimensions.height) {
+                    (None, None) => match Self::compute_cache_slot(known_dimensions, available_space) {
+                        5 => &[5],
+                        6 => &[6],
+                        7 => &[7],
+                        _ => &[8],
+                    },
+                    (Some(_), None) if available_space.height == AvailableSpace::MinContent => &[2, 6, 8],
+                    (Some(_), None) => &[1, 5, 7],
+                    (None, Some(_)) if available_space.width == AvailableSpace::MinContent => &[4, 7, 8],
+                    (None, Some(_)) => &[3, 5, 6],
+                    (Some(_), Some(_)) => &[0, 1, 2, 3, 4, 5, 6, 7, 8],
+                };
+                for &slot in candidates {
+                    let Some(entry) = &self.measure_entries[slot] else { continue };
+                    let cached_size = entry.content;
+
+                    if (known_dimensions.width == entry.known_dimensions.width
+                        || known_dimensions.width == Some(cached_size.width))
+                        && (known_dimensions.height == entry.known_dimensions.height
+                            || known_dimensions.height == Some(cached_size.height))
+                        && (known_dimensions.width.is_some()
+                            || entry.available_space.width.is_roughly_equal(available_space.width))
+                        && (known_dimensions.height.is_some()
+                            || entry.available_space.height.is_roughly_equal(available_space.height))
+                    {
+                        return Some(LayoutOutput::from_outer_size(cached_size));
+                    }
+                }
+
+                None
+            }
+            RunMode::PerformHiddenLayout => None,
+        }
+    }
+
+    #[cfg(test)]
+    fn get_reference(&self, input: &LayoutInput) -> Option<LayoutOutput> {
+        let known_dimensions = input.known_dimensions;
+        let available_space = input.available_space;
+
+        match input.run_mode {
+            RunMode::PerformLayout => self
+                .final_layout_entry
+                .filter(|entry| {
+                    let cached_size = entry.content.size;
+                    (known_dimensions.width == entry.known_dimensions.width
+                        || known_dimensions.width == Some(cached_size.width))
+                        && (known_dimensions.height == entry.known_dimensions.height
+                            || known_dimensions.height == Some(cached_size.height))
+                        && (known_dimensions.width.is_some()
+                            || entry.available_space.width.is_roughly_equal(available_space.width))
+                        && (known_dimensions.height.is_some()
+                            || entry.available_space.height.is_roughly_equal(available_space.height))
+                })
+                .map(|e| e.content),
+            RunMode::ComputeSize => {
                 for entry in self.measure_entries.iter().flatten() {
                     let cached_size = entry.content;
 
@@ -193,4 +255,66 @@ pub enum ClearState {
     Cleared,
     /// Everything was already cleared
     AlreadyEmpty,
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn candidate_slots_preserve_first_match_replacement_and_clear() {
+        let dimensions = [None, Some(0.0), Some(30.0), Some(50.0)];
+        let spaces = [
+            AvailableSpace::Definite(0.0),
+            AvailableSpace::Definite(30.0),
+            AvailableSpace::Definite(50.0),
+            AvailableSpace::MinContent,
+            AvailableSpace::MaxContent,
+        ];
+        let mut inputs = Vec::new();
+        for width in dimensions {
+            for height in dimensions {
+                for aw in spaces {
+                    for ah in spaces {
+                        for run_mode in [RunMode::ComputeSize, RunMode::PerformLayout, RunMode::PerformHiddenLayout] {
+                            inputs.push(LayoutInput {
+                                run_mode,
+                                known_dimensions: Size { width, height },
+                                available_space: Size { width: aw, height: ah },
+                                ..LayoutInput::HIDDEN
+                            });
+                        }
+                    }
+                }
+            }
+        }
+        let mut cache = Cache::new();
+        let mut random = 19_u32;
+        for step in 0..1000 {
+            random = random.wrapping_mul(1664525).wrapping_add(1013904223);
+            let input = &inputs[random as usize % inputs.len()];
+            if step % 17 == 0 {
+                cache.clear();
+            }
+            cache.store(
+                input,
+                LayoutOutput::from_outer_size(Size {
+                    width: input.known_dimensions.width.unwrap_or((step % 51) as f32),
+                    height: input.known_dimensions.height.unwrap_or((step % 31) as f32),
+                }),
+            );
+            for query in &inputs {
+                assert_eq!(cache.get(query), cache.get_reference(query));
+            }
+            assert_eq!(
+                cache.is_empty(),
+                cache.final_layout_entry.is_none() && !cache.measure_entries.iter().any(Option::is_some)
+            );
+        }
+        cache.clear();
+        assert!(cache.is_empty());
+        for query in inputs {
+            assert_eq!(cache.get(&query), None);
+        }
+    }
 }
