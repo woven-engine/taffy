@@ -14,6 +14,11 @@ and cache first-match ordering:
   otherwise line cross-size calculation and stretch still execute. Child
   stretching, margins and alignment continue to execute for actual layout.
 - Cache access wrappers permit cross-crate inlining of constant query modes.
+- Flex item collection reserves the container's bounded child count after the
+  first in-flow child is found, avoiding repeated vector growth and copies.
+  Hidden/absolute-only containers retain the no-allocation path. Temporary
+  capacity includes any filtered siblings; item order and layout stay unchanged.
+  Already resolved padding and border values are reused within each item.
 
 Regression tests compare cache lookup with the original implementation across
 replacement and clearing, and compare size-only and complete layout results

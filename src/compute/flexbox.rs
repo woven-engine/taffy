@@ -516,7 +516,8 @@ fn generate_anonymous_flex_items(
     node: NodeId,
     constants: &AlgoConstants,
 ) -> Vec<FlexItem> {
-    tree.child_ids(node)
+    let mut iter = tree
+        .child_ids(node)
         .enumerate()
         .map(|(index, child)| (index, child, tree.get_flexbox_child_style(child)))
         .filter(|(_, _, style)| style.position() != Position::Absolute)
@@ -558,12 +559,8 @@ fn generate_anonymous_flex_items(
                     .margin()
                     .resolve_or_zero(constants.node_inner_size.width, |val, basis| tree.calc(val, basis)),
                 margin_is_auto: child_style.margin().map(LengthPercentageAuto::is_auto),
-                padding: child_style
-                    .padding()
-                    .resolve_or_zero(constants.node_inner_size.width, |val, basis| tree.calc(val, basis)),
-                border: child_style
-                    .border()
-                    .resolve_or_zero(constants.node_inner_size.width, |val, basis| tree.calc(val, basis)),
+                padding,
+                border,
                 align_self: child_style.align_self().unwrap_or(constants.align_items),
                 overflow: child_style.overflow(),
                 scrollbar_width: child_style.scrollbar_width(),
@@ -586,8 +583,17 @@ fn generate_anonymous_flex_items(
                 offset_main: 0.0,
                 offset_cross: 0.0,
             }
-        })
-        .collect()
+        });
+    // Avoid repeatedly moving large FlexItems as the vector grows. Delay the
+    // reservation until an in-flow child exists, so hidden/absolute-only
+    // containers still allocate no flex items.
+    let Some(first) = iter.next() else {
+        return Vec::new();
+    };
+    let mut items = Vec::with_capacity(tree.child_count(node));
+    items.push(first);
+    items.extend(iter);
+    items
 }
 
 /// Determine the available main and cross space for the flex items.
