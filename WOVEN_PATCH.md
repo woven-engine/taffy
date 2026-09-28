@@ -13,7 +13,8 @@ and cache first-match ordering:
   A definite cross size permits a return after main-size determination;
   otherwise line cross-size calculation and stretch still execute. Child
   stretching, margins and alignment continue to execute for actual layout.
-- Cache access wrappers permit cross-crate inlining of constant query modes.
+- Cache access wrappers and the lookup itself force cross-crate inlining so
+  constant query modes and known-dimension branches can be eliminated at callers.
 - Flex item collection reserves the container's bounded child count after the
   first in-flow child is found, avoiding repeated vector growth and copies.
   Hidden/absolute-only containers retain the no-allocation path. Temporary

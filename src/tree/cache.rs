@@ -107,7 +107,7 @@ impl Cache {
     }
 
     /// Try to retrieve a cached result from the cache
-    #[inline]
+    #[inline(always)]
     pub fn get(&self, input: &LayoutInput) -> Option<LayoutOutput> {
         let known_dimensions = input.known_dimensions;
         let available_space = input.available_space;
